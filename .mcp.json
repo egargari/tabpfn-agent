@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tabpfn": {
+      "type": "http",
+      "url": "https://api.priorlabs.ai/mcp/server"
+    }
+  }
+}

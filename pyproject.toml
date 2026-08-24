@@ -1,0 +1,18 @@
+[project]
+name = "tabpfn-agent"
+version = "0.1.0"
+description = "Demo: an agent that does the data work and hands every fit to TabPFN-3"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+    "xgboost>=2.1",
+]
+
+[project.optional-dependencies]
+datasets = [
+    "ucimlrepo>=0.0.7",
+]
+
+[tool.uv]
+package = false
