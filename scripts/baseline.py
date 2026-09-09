@@ -1,19 +1,18 @@
-"""Timed XGBoost baseline for the TabPFN comparison receipt.
+"""Timed XGBoost baseline for the TabPFN comparison.
 
 Usage: python3 scripts/baseline.py <train.csv> <test.csv> <target> [--regression]
 
 Only run when the user asked for a comparison — not for plain predictions.
-Prints a JSON report: fit+predict wall-clock and metrics
-(ROC AUC / log loss for classification, RMSE / R2 for regression).
+Reports the metrics Prior Labs' own cookbook uses: ROC AUC for classification,
+R2 for regression, plus fit+predict wall-clock. Nothing else.
 """
 
 import json
 import sys
 import time
 
-import numpy as np
 import pandas as pd
-from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score
+from sklearn.metrics import r2_score, roc_auc_score
 from xgboost import XGBClassifier, XGBRegressor
 
 
@@ -27,7 +26,8 @@ def to_xgb_frame(X: pd.DataFrame, categories: dict | None = None) -> tuple[pd.Da
     if categories is None:
         categories = {c: pd.CategoricalDtype(X[c].astype("string").unique().dropna()) for c in obj_cols}
     for c, dtype in categories.items():
-        X[c] = X[c].astype("string").astype(dtype)
+        vals = X[c].astype("string")
+        X[c] = vals.where(vals.isin(dtype.categories)).astype(dtype)
     return X, categories
 
 
@@ -52,18 +52,14 @@ def main() -> None:
     if regression:
         pred = model.predict(X_test)
         elapsed = time.perf_counter() - start
-        metrics = {
-            "rmse": float(np.sqrt(mean_squared_error(y_test, pred))),
-            "r2": float(r2_score(y_test, pred)),
-        }
+        metrics = {"r2": float(r2_score(y_test, pred))}
     else:
         proba = model.predict_proba(X_test)
         elapsed = time.perf_counter() - start
-        metrics = {"log_loss": float(log_loss(y_test, proba))}
         if proba.shape[1] == 2:
-            metrics["roc_auc"] = float(roc_auc_score(y_test, proba[:, 1]))
+            metrics = {"roc_auc": float(roc_auc_score(y_test, proba[:, 1]))}
         else:
-            metrics["roc_auc_ovr"] = float(roc_auc_score(y_test, proba, multi_class="ovr"))
+            metrics = {"roc_auc_ovr": float(roc_auc_score(y_test, proba, multi_class="ovr"))}
 
     report = {
         "train_shape": list(train.shape),

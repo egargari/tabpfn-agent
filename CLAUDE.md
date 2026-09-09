@@ -15,15 +15,24 @@ Prior Labs MCP server (configured in `.mcp.json`, OAuth via `/mcp`).
   `reports/<task>/handoff.json` (see the skill, step 5).
 - Use the hosted API/MCP path only. Do not download local TabPFN weights: the TabPFN-3
   weights license is non-commercial, and this demo must stay clean for public use.
-- Datasets live in `data/` (see `scripts/fetch_data.py` to pull more). The headliner is
-  `data/telco_churn.csv` (OpenML 42178): 7,043 customers, target `Churn`, ~26.5% positive.
-  Known trap: `TotalCharges` is a string column with blank values for new customers.
-  A ready-made stratified 80/20 split ships as `telco_churn_train.csv` /
-  `telco_churn_test.csv` (random_state=0) — use it for compare mode instead of
-  re-splitting; use the full file when training for plain predictions.
-- Receipts (`reports/<task>/receipt.md`: XGBoost vs TabPFN scoreboard, handoff trace,
-  calibration note) are written in compare mode only. In predict mode the deliverable is
-  the answer plus a 2-3 line trace note.
+- Datasets live in `data/` as role-named splits (created by `scripts/fetch_data.py`,
+  80/20, random_state=0): `<name>_history.csv` = labeled rows, the ONLY data to fit on;
+  `<name>_test.csv` = the held-out 20% with labels, evaluation only — never fit on it,
+  never concatenate splits; `<name>_current.csv` = the SAME held-out rows minus the
+  target, what gets scored on request (evaluable row-by-row against test);
+  `<name>.csv` = full reference copy, never fit on it when role files exist.
+- Headliner: telco churn (OpenML 42178), target `Churn`, ~26.5% positive. Known trap:
+  `TotalCharges` is a string column with blank values for new (tenure-0) customers.
+- Fit and predict are separately authorized: a request to fit/train a model ends after
+  the fit is cached and reported ready. Never pick data to score on your own.
+  `data/telco_churn_current.csv` is the test split with the `Churn` column removed (same
+  row order, same quoting) — learners copy rows from it to paste as "new" customers to
+  score.
+- Reports are written ONLY when the user asks for one, and are living markdown files in
+  `reports/<task>/` (template in the skill): extend the existing report on "add to the
+  report", create a new file on "new report", and add the XGBoost comparison section
+  later if that's when the user asks. Default deliverable is always the chat answer
+  plus a 2-3 line trace note.
 
 ## Facts (verified August 2026)
 

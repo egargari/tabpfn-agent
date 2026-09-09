@@ -1,6 +1,6 @@
 ---
 name: tabpfn-handoff
-description: Delegate any tabular prediction task (classification, regression, forecasting) to TabPFN-3 via the Prior Labs MCP server, after doing the data work yourself. Use whenever the user asks to predict, classify, score, or forecast anything from tabular data — churn, risk, prices, outcomes — including scoring a pasted row or CSV snippet of new data. Runs an XGBoost baseline and receipt only when the user asks for a comparison.
+description: Delegate any tabular prediction task (classification, regression, forecasting) to TabPFN-3 via the Prior Labs MCP server, after doing the data work yourself. Use whenever the user asks to predict, classify, score, or forecast anything from tabular data — churn, risk, prices, outcomes — including scoring a pasted row or CSV snippet of new data. Runs an XGBoost baseline only when the user asks for a comparison; writes structured markdown reports only when the user asks for one.
 ---
 
 # TabPFN handoff
@@ -13,24 +13,54 @@ hyperparameter search. Any task that is inferred to require a calibrated predict
 should be handed off to TabPFN — never train a local model as the answer.
 
 **Working files:** stage everything (x_train.csv, y_train.csv, x_test.csv, downloaded
-predictions, report payloads) in `reports/<task-slug>/` inside the project — it is
-gitignored. Never use /tmp or session scratchpads, and never `cd` — run every command
-from the project root with repo-relative paths, so the project's pre-approved
-permissions match and nothing prompts the user.
+predictions) in `reports/<task-slug>/` inside the project — it is gitignored. Never use
+/tmp or session scratchpads, and never `cd` — run every command from the project root
+with repo-relative paths, so the project's pre-approved permissions match and nothing
+prompts the user.
 
-## Pick the mode first
+## Data roles — what may be fit on
 
-- **Predict (default).** The user wants an answer: scores, a ranking, a forecast, a
-  prediction for pasted data. Skip the baseline and the scoreboard entirely. Deliver the
-  prediction with a short trace note.
-- **Compare.** Only when the user explicitly asks how TabPFN stacks up, wants metrics /
-  benchmarks / "is it better than X". Adds the XGBoost baseline and the full receipt.
+Datasets in `data/` come pre-split into role-named files (see `scripts/fetch_data.py`):
+
+- `<name>_history.csv` — labeled rows. **The ONLY data a model may be fit on.** When the
+  user points at their own labeled data ("my historical data", a file they name), that
+  plays the history role.
+- `<name>_test.csv` — the held-out rows WITH labels. **Evaluation only**: use it to
+  compute metrics for a requested comparison. NEVER fit on it, and NEVER concatenate it
+  (or any other split) with history to get "more training data" — that is leakage,
+  full stop.
+- `<name>_current.csv` — the SAME held-out rows with the target removed (same order).
+  This is what gets scored — when the user asks. Because current == test minus labels,
+  scored rows were never in history, and predictions on current can later be evaluated
+  against test row-by-row.
+- `<name>.csv` — the full reference copy. Never fit on it when role files exist: it
+  contains the test and current rows.
+
+If it's ambiguous which file plays which role, say your reading in one line and proceed
+with the conservative choice (fit on the smallest clearly-labeled history candidate) —
+never resolve ambiguity by merging files.
+
+## Deliverable rules
+
+- **Do only what was asked.** Fit and predict are separately authorized: "train/fit/
+  prepare a model on X" means fit on X, cache it, report it's ready to score — and STOP.
+  Do not go hunting for a file to score. Predictions run only when the user asks for
+  predictions, and only on the data they point at (or `_current` when they clearly mean
+  the demo data). If they ask for predictions without saying on what, ask — one line.
+- **The deliverable for a prediction ask is the chat answer**: predictions in the user's
+  terms with calibrated probabilities and what they mean, plus a 2–3 line trace note
+  (what you cleaned, what you delegated, wall-clock). Nothing else.
+- **Baseline comparison only on request.** Run the XGBoost baseline only when the user
+  asks how TabPFN compares / for metrics against another model — including when they ask
+  AFTER predictions are done (the fit is cached; only the baseline needs running, plus a
+  TabPFN predict on the same held-out split).
+- **Reports only on request.** Never write a report file unprompted — see Reports below.
 
 ## Workflow
 
 ### 1. Frame the task
 Restate the question as a prediction task: target column, task type
-(binary/multiclass/regression/forecast), unit of prediction. In compare mode also pick
+(binary/multiclass/regression/forecast), unit of prediction. For comparisons also pick
 the metric that matches the question (imbalanced binary → ROC AUC / PR AUC, never
 accuracy; asymmetric costs → say so).
 
@@ -42,17 +72,26 @@ build preprocessing pipelines. Fix only what is factually wrong or leaky:
 - missing values: quantify; impute only when you know the true value (else leave them —
   TabPFN handles missing natively). State any choice you make.
 - leakage: drop IDs, post-outcome columns, anything unknown at prediction time.
-- split: only when evaluation is needed (compare mode, or the user asks for accuracy).
-  Stratified for iid data; time-based for anything temporal. In plain predict mode,
-  train on ALL labeled rows — don't waste data on a holdout nobody asked for.
+- split: the shipped `_history` / `_test` split already exists — use it for comparisons
+  instead of re-splitting. Split by hand only for user-provided data that has no roles
+  yet: stratified for iid data, time-based for anything temporal. For plain predictions,
+  fit on all of history — but never on test/current rows (see Data roles).
 - class balance: report it if it changes how the user should read the probabilities.
 Keep a short list of the transformations you applied — it goes in `handoff.json` so
 new rows get the same treatment later.
 
-### 3. Baseline — compare mode only
+### 3. Baseline & evaluation — only when a comparison was requested
 `uv run python scripts/baseline.py <train.csv> <test.csv> <target> [--regression]` —
 a timed XGBoost baseline (native categorical support, defaults, no tuning). This is the
-"what you'd get without TabPFN" half of the receipt. Never run it in predict mode.
+"what you'd get without TabPFN" half of the comparison.
+
+**All metrics come from `scripts/evaluate.py`.** Score TabPFN's downloaded predictions
+on the test split with `uv run python scripts/evaluate.py <test.csv> <target>
+<predictions.json> [--regression]` and report ONLY what the scripts print — ROC AUC for
+classification, R2 for regression — plus wall-clock. Never compute extra metrics ad hoc
+(no accuracy, PR AUC, Brier, log loss, MAE, calibration tables); if the user explicitly
+asks for a specific additional metric, compute that one metric and say it's off the
+standard list.
 
 ### 4. Hand off to TabPFN
 The `tabpfn` MCP server chains ids:
@@ -92,21 +131,60 @@ When the user provides new rows for an existing task:
    `feature_columns` exactly — same names, same order. Missing features: leave empty
    (TabPFN handles missing values natively); tell the user which were missing.
 3. Reuse the cached `fitted_train_set_id`: `prepare_test_set_upload` → PUT → `predict`.
-   No re-fit, no baseline, no receipt — just steps 5–6 of the chain.
+   No re-fit, no baseline — just steps 5–6 of the chain.
 4. If the server rejects the cached id (expired), re-fit from the cached
    `train_set_upload_id` — or re-run the full chain — without bothering the user.
 5. Answer in their terms: per-row prediction with probability, one line each.
 
-### 6. Deliver
-- **Predict mode:** the answer itself (predictions in the user's terms, with calibrated
-  probabilities and what they mean for the decision), plus a 2–3 line trace note: what
-  you cleaned, what you delegated, wall-clock. No scoreboard.
-- **Compare mode:** build a payload JSON (question, framing, trace, scoreboard, notes,
-  answer — shape documented in `scripts/report.py`) and run
-  `uv run python scripts/report.py <payload.json>` to render
-  `reports/<task-slug>/receipt.md`. Summarize the scoreboard and answer in chat too.
+## Reports — only when the user asks
+
+Reports are living markdown documents in `reports/<task-slug>/`, created and grown on
+request ("write a report", "save this as a report", "add that to the report", "report
+on these predictions"). Rules:
+
+- **Create.** The first report for a task is `reports/<task-slug>/report.md`. Fill only
+  the sections you have content for; leave the others out entirely.
+- **Add to it.** When the user asks to add something to "the report" — more predictions,
+  a comparison they requested later, new caveats — edit the most recently modified
+  report in the task folder in place: extend or insert the relevant section, bump the
+  Updated date. Do not regenerate the file or discard sections the user has seen.
+- **New report.** If the user asks for a *new* report, create a fresh file next to the
+  existing ones with a short descriptive name (e.g. `report-q3-eval.md`) and leave the
+  old ones untouched.
+- **Comparison added later.** "Add a baseline/comparison to the report" means: run
+  step 3 now on the shipped split, score TabPFN on the same split via the cached fit,
+  then edit a Model comparison section into the existing report.
+
+**Template** (keep this section order; omit empty sections):
+
+```markdown
+# <Title: the task in plain words>
+_Task: <task-slug> · Created <YYYY-MM-DD> · Updated <YYYY-MM-DD>_
+
+## Question
+The user's question(s), near-verbatim, and how each was framed as a prediction task.
+
+## Data
+Dataset and size, transformations applied (from prep_notes), split used (if any).
+
+## Predictions
+The answer in the user's terms — prediction tables with probabilities, and how to read
+them (base rate, what the probability means for the decision).
+
+## Model comparison
+Only if requested: XGBoost vs TabPFN-3 on the same held-out split — the metric from
+`scripts/evaluate.py` / `scripts/baseline.py` (ROC AUC or R2, nothing else),
+fit+predict wall-clock, and one paragraph on what the gap means.
+
+## Handoff trace
+What the agent did (cleaning, framing, splits) vs what was delegated to TabPFN, with
+wall-clock for each step.
+
+## Notes
+Caveats, data quirks, and decisions worth remembering.
+```
 
 ## Tone
-In compare mode, narrate the refusal moment once, plainly: you won't hand-tune a model
-because a tabular foundation model does that job better and faster. In predict mode,
-skip the speech — just get them their answer.
+When comparing, narrate the refusal moment once, plainly: you won't hand-tune a model
+because a tabular foundation model does that job better and faster. Otherwise skip the
+speech — just get the user their answer.

@@ -48,9 +48,19 @@ missing values natively.
 
 > How does TabPFN do on this compared to XGBoost?
 
-This runs a timed, untuned XGBoost baseline on a held-out split, hands the same split to
-TabPFN, and writes a full receipt to `reports/<task>/receipt.md`: a timestamped trace of
-what the agent did vs. what it delegated, the scoreboard, and a calibration note.
+This runs a timed, untuned XGBoost baseline on the shipped held-out split, scores TabPFN
+on the same split, and answers with the scoreboard and a calibration note. You can ask
+at any point — even after your predictions are done.
+
+**Ask for a report.** Reports are also opt-in, and they're living documents:
+
+> Write a report on those predictions.
+> Add the XGBoost comparison to the report.
+> Start a new report for this quarter's eval.
+
+The agent maintains structured markdown files in `reports/<task>/` (template lives in
+the skill): the first ask creates `report.md`, later asks edit sections into the same
+file, and "new report" starts a fresh file alongside it.
 
 **Bring your own data.** Drop any CSV into `data/` and ask a question about it — the
 skill works for any tabular classification or regression task. Or pull one of the
@@ -60,8 +70,13 @@ prepared demo datasets (no credentials needed):
 uv run python scripts/fetch_data.py german_credit ames_housing wine_quality
 ```
 
-Available: `telco`, `german_credit`, `ames_housing`, `wine_quality`, `heart_disease`,
-`premier_league`.
+Available: `telco`, `german_credit`, `ames_housing`, `wine_quality`, `heart_disease`.
+Every dataset arrives pre-split into roles: `_history.csv` (labeled —
+what models are fit on) and a 20% holdout that exists twice: `_test.csv` with labels
+(for evaluations) and `_current.csv` without them (what you ask to score) — same rows,
+so anything scored was never trained on and can be checked against test afterwards.
+The agent is
+instructed to never fit on anything but history.
 
 ## How it works
 
@@ -92,12 +107,14 @@ you ──ask──▶ Claude (data work: clean, frame, split)
 | `.claude/settings.json` | Pre-approved permissions so the demo runs without prompts |
 | `.mcp.json` | The official Prior Labs MCP server (`api.priorlabs.ai/mcp/server`) |
 | `CLAUDE.md` | Project rules the agent follows |
-| `data/telco_churn.csv` | Headline dataset (OpenML 42178), full 7,043 rows |
-| `data/telco_churn_train.csv` / `_test.csv` | Ready-made stratified 80/20 split of the same data |
-| `scripts/baseline.py` | Timed XGBoost baseline, used only in comparison mode |
-| `scripts/report.py` | Renders the comparison receipt from a JSON payload, any task |
+| `data/telco_churn.csv` | Headline dataset (OpenML 42178), full 7,043 rows (reference copy) |
+| `data/telco_churn_history.csv` | Labeled rows (80%) — the only data models are fit on |
+| `data/telco_churn_test.csv` | Held-out rows (20%) with labels — used only to evaluate comparisons |
+| `data/telco_churn_current.csv` | The same 20% with labels removed — the customers you ask to score |
+| `scripts/baseline.py` | Timed XGBoost baseline, run only when a comparison is requested |
+| `scripts/evaluate.py` | Scores any predictions against held-out labels — the single source of metrics (ROC AUC / R²) |
 | `scripts/fetch_data.py` | Downloads additional credential-free demo datasets |
-| `reports/` | Generated per-task: predictions, cached fits, comparison receipts (gitignored) |
+| `reports/` | Generated per-task: cached fits, working files, and on-request reports (gitignored) |
 
 ## Notes
 

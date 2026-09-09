@@ -1,58 +1,80 @@
-"""Fetch the demo dataset bundle into data/ (no credentials needed).
+"""Fetch demo datasets into data/ and pre-split them into role-named files.
+
+Every dataset lands as four files:
+  <name>.csv           full labeled dataset (reference copy — never fit on it)
+  <name>_history.csv   80%: labeled rows — the ONLY data a model may be fit on
+  <name>_test.csv      20%: held-out rows WITH labels — evaluation only
+  <name>_current.csv   the SAME 20% rows with the target column removed — what you score
+
+_test and _current are copies of each other (same rows, same order); current just hides
+the labels. Scoring "current" therefore scores rows the model never saw in history, and
+every scored row can be checked against _test afterwards.
 
 Usage: python3 scripts/fetch_data.py [name ...]   # default: telco
 
-Names: telco, german_credit, ames_housing, wine_quality, heart_disease, premier_league
+Names: telco, german_credit, ames_housing, wine_quality, heart_disease
 """
 
 import sys
 from pathlib import Path
 
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 
-OPENML = {  # name -> (openml data_id, filename)
-    "telco": (42178, "telco_churn.csv"),
-    "german_credit": (31, "german_credit.csv"),
-    "ames_housing": (42165, "ames_housing.csv"),
+# name -> (source, source_id, filename stem, target column, temporal sort column or None)
+DATASETS = {
+    "telco": ("openml", 42178, "telco_churn", "Churn", None),
+    "german_credit": ("openml", 31, "german_credit", "class", None),
+    "ames_housing": ("openml", 42165, "ames_housing", "SalePrice", None),
+    "wine_quality": ("uci", 186, "wine_quality", "quality", None),
+    "heart_disease": ("uci", 45, "heart_disease", "num", None),
 }
-UCI = {  # name -> (ucimlrepo id, filename)
-    "wine_quality": (186, "wine_quality.csv"),
-    "heart_disease": (45, "heart_disease.csv"),
-}
-# football-data.co.uk season codes for the last 10 Premier League seasons
-PL_SEASONS = ["1516", "1617", "1718", "1819", "1920", "2021", "2122", "2223", "2324", "2425"]
 
 
-def fetch(name: str) -> Path:
-    DATA.mkdir(exist_ok=True)
-    if name in OPENML:
+
+def load(name: str) -> tuple[pd.DataFrame, str, str, str | None]:
+    source, source_id, stem, target, temporal = DATASETS[name]
+    full_path = DATA / f"{stem}.csv"
+    if full_path.exists():
+        return pd.read_csv(full_path), stem, target, temporal
+    if source == "openml":
         from sklearn.datasets import fetch_openml
 
-        data_id, filename = OPENML[name]
-        df = fetch_openml(data_id=data_id, as_frame=True).frame
-    elif name in UCI:
+        df = fetch_openml(data_id=source_id, as_frame=True).frame
+    else:  # uci
         from ucimlrepo import fetch_ucirepo  # pip install ucimlrepo
 
-        uci_id, filename = UCI[name]
-        ds = fetch_ucirepo(id=uci_id)
+        ds = fetch_ucirepo(id=source_id)
         df = pd.concat([ds.data.features, ds.data.targets], axis=1)
-    elif name == "premier_league":
-        filename = "premier_league_2015_2025.csv"
-        frames = []
-        for season in PL_SEASONS:
-            url = f"https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
-            frame = pd.read_csv(url)
-            frame["Season"] = season
-            frames.append(frame)
-        df = pd.concat(frames, ignore_index=True)
-    else:
+    return df, stem, target, temporal
+
+
+def split(df: pd.DataFrame, target: str, temporal: str | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """80/20 history/holdout. Temporal data splits by time order, never randomly."""
+    if temporal:
+        df = df.sort_values(temporal, kind="stable").reset_index(drop=True)
+        h = int(len(df) * 0.80)
+        return df.iloc[:h], df.iloc[h:]
+    stratify = df[target] if df[target].nunique() <= 20 else None
+    return train_test_split(df, test_size=0.20, stratify=stratify, random_state=0)
+
+
+def fetch(name: str) -> None:
+    if name not in DATASETS:
         raise SystemExit(f"unknown dataset: {name} (see module docstring)")
-    out = DATA / filename
-    df.to_csv(out, index=False)
-    print(f"{name}: {df.shape[0]} rows x {df.shape[1]} cols -> {out}")
-    return out
+    DATA.mkdir(exist_ok=True)
+    df, stem, target, temporal = load(name)
+    df.to_csv(DATA / f"{stem}.csv", index=False)
+    history, holdout = split(df, target, temporal)
+    history.to_csv(DATA / f"{stem}_history.csv", index=False)
+    holdout.to_csv(DATA / f"{stem}_test.csv", index=False)
+    holdout.drop(columns=[target]).to_csv(DATA / f"{stem}_current.csv", index=False)
+    print(
+        f"{name}: {len(df)} rows -> {stem}_history.csv ({len(history)}), "
+        f"{stem}_test.csv ({len(holdout)}), {stem}_current.csv (same {len(holdout)} rows, no '{target}')"
+    )
 
 
 if __name__ == "__main__":
