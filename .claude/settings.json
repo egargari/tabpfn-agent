@@ -4,7 +4,6 @@
     "defaultMode": "acceptEdits",
     "allow": [
       "mcp__tabpfn",
-      "Bash(curl:*)",
       "Bash(uv run:*)",
       "Bash(uv sync:*)",
       "Bash(ls:*)",
@@ -13,8 +12,7 @@
       "Bash(cat:*)",
       "Bash(mkdir:*)",
       "Bash(sleep:*)",
-      "Bash(date:*)",
-      "Bash(python3:*)"
+      "Bash(date:*)"
     ]
   }
 }

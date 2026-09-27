@@ -1,7 +1,7 @@
 [project]
 name = "tabpfn-agent"
 version = "0.1.0"
-description = "Demo: an agent that does the data work and hands every fit to TabPFN-3"
+description = "Demo: an agent that does the data work and hands every fit to TabPFN"
 requires-python = ">=3.10"
 dependencies = [
     "pandas>=2.0",

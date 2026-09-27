@@ -3,7 +3,10 @@
 This is a [Claude Code](https://claude.com/claude-code) project where the agent does the
 data work — loading, cleaning, leakage checks — and hands over to
 **[TabPFN](https://priorlabs.ai)**, Prior Labs' tabular foundation model, through the
-official TabPFN MCP server, when the user request asks for a prediction (classification, regression, forecasting etc) over a structured dataset (like a CSV). This way, instead of using an LLM for a task that should be explainable and deterministic, the agent knows to hand-off to a specialized tabular foundation model. 
+official TabPFN MCP server, whenever a request turns out to be a prediction task
+(classification or regression) over a structured dataset like a CSV. Instead of
+guessing with the LLM or hand-rolling a model, the agent recognizes the task and makes a
+tool call to a specialized tabular foundation model.
 
 ## Setup
 
@@ -21,36 +24,45 @@ claude
 ```
 
 Inside Claude Code, run `/mcp` once and authenticate the `tabpfn` server with your Prior
-Labs account (OAuth, opens your browser). That's the only permission step — the project
-settings pre-approve everything else the demo needs.
+Labs account (OAuth, opens your browser). The project settings pre-approve the commands
+the demo needs, so you shouldn't get permission prompts in the normal flow — see
+[Permissions](#permissions) for what's pre-approved and why.
 
 ## Using it
 
 **Ask for a prediction.** The repo ships with a telco customer-churn dataset
-(`data/telco_churn.csv`, 7,043 customers). Just ask:
+(7,043 customers, pre-split into history and held-out current customers). Just ask:
 
-> Which of my customers are most likely to churn, and what's driving it?
+> Which of my current customers are most likely to churn?
 
 The agent inspects and cleans the data (it will catch the string-typed `TotalCharges`
-column on its own), delegates the fit to TabPFN-3, and answers with a ranked list of
-at-risk customers, calibrated probabilities, and the drivers behind them.
+column on its own), delegates the fit to TabPFN, and answers with a ranked list of
+at-risk customers and their calibrated churn probabilities.
 
 **Score new data.** Paste a row — or a few — straight into the chat:
 
 > What's the churn risk for this customer?
 > Female, senior, no partner, tenure 2, fiber optic, month-to-month, electronic check, monthly charges 85.70
 
+Or copy a real row from `data/telco_churn_current.csv` — its true label is on the same
+line of `data/telco_churn_test.csv`, so you can check the answer afterwards.
+
 The agent maps your row onto the trained features, reuses the cached TabPFN fit (no
 retraining), and returns the probability. Missing fields are fine — TabPFN handles
 missing values natively.
+
+**Check it against held-out labels.** The current customers are the held-out split, so
+their true labels exist in `data/telco_churn_test.csv`:
+
+> How well did those predictions do?
 
 **Ask for a comparison.** Benchmarks only happen when you ask:
 
 > How does TabPFN do on this compared to XGBoost?
 
 This runs a timed, untuned XGBoost baseline on the shipped held-out split, scores TabPFN
-on the same split, and answers with the scoreboard and a calibration note. You can ask
-at any point — even after your predictions are done.
+on the same split, and answers with ROC AUC (classification) or R² (regression) for
+both. You can ask at any point — even after your predictions are done.
 
 **Ask for a report.** Reports are also opt-in, and they're living documents:
 
@@ -58,25 +70,63 @@ at any point — even after your predictions are done.
 > Add the XGBoost comparison to the report.
 > Start a new report for this quarter's eval.
 
-The agent maintains structured markdown files in `reports/<task>/` (template lives in
-the skill): the first ask creates `report.md`, later asks edit sections into the same
-file, and "new report" starts a fresh file alongside it.
+The agent maintains markdown files in `reports/<task>/`, where `<task>` is the dataset
+name (e.g. `reports/telco_churn/`). The first ask creates `report.md`, "add to the
+report" edits it in place, and "new report" creates `report-2.md`, `report-3.md`, and
+so on. Every report has the same sections: Question, Data, **Prediction results**,
+**Test results** (predictions scored against the held-out labels), **Benchmark
+results** (XGBoost vs TabPFN — only once you've asked for a comparison), Handoff trace,
+and Notes. The template lives in the skill.
 
-**Bring your own data.** Drop any CSV into `data/` and ask a question about it — the
-skill works for any tabular classification or regression task. Or pull one of the
-prepared demo datasets (no credentials needed):
+### Questions to try on telco churn
+
+In roughly this order, they make a complete demo:
+
+1. *"How many customers do we have, and what share of them churned?"* — not a
+   prediction, so the agent answers from the data directly, with no TabPFN call.
+2. *"Fit a churn model on our customer history."* — fit only: the agent cleans the
+   data, fits TabPFN, caches the fit, and stops. It doesn't score anything you didn't
+   ask for.
+3. *"Which of our current customers are most likely to churn? Give me the top 10."*
+4. *"Is this customer likely to churn?"* followed by a pasted row, e.g. the last line of
+   `data/telco_churn_current.csv`:
+   `Female,0,Yes,Yes,1,Yes,Yes,'Fiber optic',Yes,No,Yes,No,Yes,Yes,Month-to-month,Yes,'Electronic check',102.45,102.45`
+   (the true label is `Yes`).
+5. *"What about these three?"* with a few rows pasted as CSV — one upload, one predict,
+   same cached fit.
+6. *"How many of the current customers would you flag at a 50% threshold?"*
+7. *"How well did those predictions do against the real outcomes?"* — Test results.
+8. *"How does that compare to XGBoost?"* — Benchmark results.
+9. *"Write a report on this."*, then *"Add the XGBoost comparison to the report."*
+
+**More datasets.** Telco churn and Ames housing ship with the repo. Pull the others
+(no credentials needed):
 
 ```bash
-uv run python scripts/fetch_data.py german_credit ames_housing wine_quality
+uv sync --extra datasets
 ```
 
-Available: `telco`, `german_credit`, `ames_housing`, `wine_quality`, `heart_disease`.
-Every dataset arrives pre-split into roles: `_history.csv` (labeled —
-what models are fit on) and a 20% holdout that exists twice: `_test.csv` with labels
-(for evaluations) and `_current.csv` without them (what you ask to score) — same rows,
-so anything scored was never trained on and can be checked against test afterwards.
-The agent is
-instructed to never fit on anything but history.
+```bash
+uv run python scripts/fetch_data.py german_credit wine_quality heart_disease
+```
+
+| Dataset | Task | Target | Rows |
+|---|---|---|---|
+| `telco_churn` (shipped) | Binary classification: will this customer churn? | `Churn` | 7,043 |
+| `ames_housing` (shipped) | Regression: what will this house sell for? | `SalePrice` | 1,460 |
+| `german_credit` | Binary classification: will this loan applicant default? | `class` | 1,000 |
+| `wine_quality` | Multiclass or regression: quality score 3–9 | `quality` | 6,497 |
+| `heart_disease` | Multiclass (0–4) or binary: heart disease present? | `num` | 303 |
+
+Every dataset arrives pre-split into roles: `_history.csv` (labeled — the only thing
+models are fit on) and a 20% holdout that exists twice: `_test.csv` with labels (for
+evaluation) and `_current.csv` without them (what you ask to score). They're the same
+rows in the same order, so anything scored was never trained on and can be checked
+against test afterwards.
+
+**Bring your own data.** Drop any CSV into `data/` and ask a question about it — the
+skill works for any tabular classification or regression task. If it has no role
+split, the agent makes one before it evaluates anything.
 
 ## How it works
 
@@ -92,29 +142,60 @@ Whenever a prediction is asked for, it has the agent:
    `reports/<task>/handoff.json` so follow-up questions and pasted rows reuse them.
 4. Answer in your terms — never by training a local model itself.
 
+Questions that aren't predictions ("how many customers churned?", "what's the average
+bill?") are answered directly from the data, with no handoff.
+
 ```
 you ──ask──▶ Claude (data work: clean, frame, split)
                  │
-                 └──handoff──▶ TabPFN MCP server ──▶ TabPFN-3 (fit + predict, one forward pass)
+                 └──handoff──▶ TabPFN MCP server ──▶ TabPFN (fit + predict, one forward pass)
                  ◀──calibrated probabilities──┘
 ```
+
+## Permissions
+
+Claude Code asks before running any shell command that isn't pre-approved. The shared
+project settings in [`.claude/settings.json`](.claude/settings.json) pre-approve only
+what the demo needs:
+
+| Rule | Why |
+|---|---|
+| `mcp__tabpfn` | The TabPFN MCP tools (fit, predict, upload preparation) |
+| `Bash(uv run:*)`, `Bash(uv sync:*)` | The project's Python: inline pandas, `scripts/*.py` |
+| `Bash(ls:*)`, `head`, `wc`, `cat`, `mkdir`, `sleep`, `date` | Read-only file inspection and polling |
+
+**Why curl isn't on the list.** The TabPFN MCP server hands back signed URLs and
+suggests running `curl` to upload and download files. Blanket-allowing `Bash(curl:*)`
+would let the agent send any file to any host without asking, and URL-restricted curl
+rules are easy to get around (see the Claude Code
+[permissions docs](https://code.claude.com/docs/en/permissions)). Instead, the skill
+moves files with [`scripts/transfer.py`](scripts/transfer.py), which refuses any URL
+outside Prior Labs' storage bucket (`https://storage.googleapis.com/p2or-datasets-prod/`)
+and any local path outside `reports/`. It runs under the existing `uv run` rule, so
+there's no prompt, and a raw `curl` still asks you first.
+
+If you'd rather not approve anything from this repo automatically, delete the `allow`
+list and approve commands one by one. Choosing "Yes, and don't ask again" saves a rule
+in your own `.claude/settings.local.json`. Note that `Bash(uv run:*)` is the broad one:
+it lets the agent run any Python in the project venv, which is what the inline data
+work relies on.
 
 ## Repo layout
 
 | Path | What it is |
 |---|---|
 | `.claude/skills/tabpfn-handoff/` | The skill: when to hand off, the data-work checklist, the MCP tool chain |
-| `.claude/settings.json` | Pre-approved permissions so the demo runs without prompts |
+| `.claude/settings.json` | Pre-approved permissions so the demo runs without prompts (see [Permissions](#permissions)) |
 | `.mcp.json` | The official Prior Labs MCP server (`api.priorlabs.ai/mcp/server`) |
 | `CLAUDE.md` | Project rules the agent follows |
-| `data/telco_churn.csv` | Headline dataset (OpenML 42178), full 7,043 rows (reference copy) |
-| `data/telco_churn_history.csv` | Labeled rows (80%) — the only data models are fit on |
-| `data/telco_churn_test.csv` | Held-out rows (20%) with labels — used only to evaluate comparisons |
-| `data/telco_churn_current.csv` | The same 20% with labels removed — the customers you ask to score |
+| `data/<name>_history.csv` | Labeled rows (80%) — the only data models are fit on |
+| `data/<name>_test.csv` | Held-out rows (20%) with labels — evaluation only |
+| `data/<name>_current.csv` | The same 20% with labels removed — the rows you ask to score |
 | `scripts/baseline.py` | Timed XGBoost baseline, run only when a comparison is requested |
 | `scripts/evaluate.py` | Scores any predictions against held-out labels — the single source of metrics (ROC AUC / R²) |
-| `scripts/fetch_data.py` | Downloads additional credential-free demo datasets |
-| `reports/` | Generated per-task: cached fits, working files, and on-request reports (gitignored) |
+| `scripts/fetch_data.py` | Downloads the demo datasets and writes the role splits |
+| `scripts/transfer.py` | Uploads/downloads TabPFN files, restricted to Prior Labs storage and `reports/` |
+| `reports/<task>/` | Generated per dataset: `handoff.json` (cached fit), working files, and on-request `report.md` (gitignored) |
 
 ## Notes
 

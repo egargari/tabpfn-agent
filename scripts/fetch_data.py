@@ -1,7 +1,6 @@
 """Fetch demo datasets into data/ and pre-split them into role-named files.
 
-Every dataset lands as four files:
-  <name>.csv           full labeled dataset (reference copy — never fit on it)
+Every dataset lands as three files (the full dataset itself is never written):
   <name>_history.csv   80%: labeled rows — the ONLY data a model may be fit on
   <name>_test.csv      20%: held-out rows WITH labels — evaluation only
   <name>_current.csv   the SAME 20% rows with the target column removed — what you score
@@ -10,7 +9,10 @@ _test and _current are copies of each other (same rows, same order); current jus
 the labels. Scoring "current" therefore scores rows the model never saw in history, and
 every scored row can be checked against _test afterwards.
 
-Usage: python3 scripts/fetch_data.py [name ...]   # default: telco
+A dataset whose three files already exist is skipped, so re-running never rewrites the
+shipped splits. Delete its files to re-download it.
+
+Usage: uv run python scripts/fetch_data.py [name ...]   # default: telco
 
 Names: telco, german_credit, ames_housing, wine_quality, heart_disease
 """
@@ -33,22 +35,21 @@ DATASETS = {
 }
 
 
-
-def load(name: str) -> tuple[pd.DataFrame, str, str, str | None]:
-    source, source_id, stem, target, temporal = DATASETS[name]
-    full_path = DATA / f"{stem}.csv"
-    if full_path.exists():
-        return pd.read_csv(full_path), stem, target, temporal
+def load(name: str) -> pd.DataFrame:
+    source, source_id = DATASETS[name][:2]
     if source == "openml":
         from sklearn.datasets import fetch_openml
 
         df = fetch_openml(data_id=source_id, as_frame=True).frame
     else:  # uci
-        from ucimlrepo import fetch_ucirepo  # pip install ucimlrepo
+        try:
+            from ucimlrepo import fetch_ucirepo
+        except ImportError:
+            raise SystemExit(f"{name} comes from UCI: run `uv sync --extra datasets` first")
 
         ds = fetch_ucirepo(id=source_id)
         df = pd.concat([ds.data.features, ds.data.targets], axis=1)
-    return df, stem, target, temporal
+    return df
 
 
 def split(df: pd.DataFrame, target: str, temporal: str | None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -64,9 +65,13 @@ def split(df: pd.DataFrame, target: str, temporal: str | None) -> tuple[pd.DataF
 def fetch(name: str) -> None:
     if name not in DATASETS:
         raise SystemExit(f"unknown dataset: {name} (see module docstring)")
+    _, _, stem, target, temporal = DATASETS[name]
+    paths = [DATA / f"{stem}_{role}.csv" for role in ("history", "test", "current")]
+    if all(p.exists() for p in paths):
+        print(f"{name}: already in data/ ({', '.join(p.name for p in paths)}), skipped")
+        return
     DATA.mkdir(exist_ok=True)
-    df, stem, target, temporal = load(name)
-    df.to_csv(DATA / f"{stem}.csv", index=False)
+    df = load(name)
     history, holdout = split(df, target, temporal)
     history.to_csv(DATA / f"{stem}_history.csv", index=False)
     holdout.to_csv(DATA / f"{stem}_test.csv", index=False)
