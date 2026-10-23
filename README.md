@@ -13,7 +13,7 @@ tool call to a specialized tabular foundation model.
 You need:
 
 - [Claude Code](https://claude.com/claude-code)
-- [uv](https://docs.astral.sh/uv/)
+- [uv](https://docs.astral.sh/uv/) — or just Python 3.10+ with pip (see below)
 - A free [Prior Labs account](https://ux.priorlabs.ai)
 
 ```bash
@@ -22,6 +22,17 @@ cd tabpfn-agent
 uv sync
 claude
 ```
+
+**No uv? Use pip.** In a sandbox or environment that only has pip, install the same
+dependencies from the requirements file instead of `uv sync`:
+
+```bash
+pip install -r requirements.txt
+```
+
+Use `requirements-datasets.txt` instead if you also want the UCI datasets (wine quality,
+heart disease). The agent notices when uv is missing and runs the same commands with
+plain `python`; everywhere this README says `uv run python`, `python` works too.
 
 Inside Claude Code, run `/mcp` once and authenticate the `tabpfn` server with your Prior
 Labs account (OAuth, opens your browser). The project settings pre-approve the commands
@@ -106,6 +117,8 @@ In roughly this order, they make a complete demo:
 uv sync --extra datasets
 ```
 
+(with pip: `pip install -r requirements-datasets.txt`)
+
 ```bash
 uv run python scripts/fetch_data.py german_credit wine_quality heart_disease
 ```
@@ -162,23 +175,38 @@ what the demo needs:
 |---|---|
 | `mcp__tabpfn` | The TabPFN MCP tools (fit, predict, upload preparation) |
 | `Bash(uv run:*)`, `Bash(uv sync:*)` | The project's Python: inline pandas, `scripts/*.py` |
+| `Bash(python scripts/:*)`, `Bash(python -:*)`, `Bash(pip install -r requirements:*)` | The same, for pip-only environments without uv |
 | `Bash(ls:*)`, `head`, `wc`, `cat`, `mkdir`, `sleep`, `date` | Read-only file inspection and polling |
 
-**Why curl isn't on the list.** The TabPFN MCP server hands back signed URLs and
-suggests running `curl` to upload and download files. Blanket-allowing `Bash(curl:*)`
-would let the agent send any file to any host without asking, and URL-restricted curl
-rules are easy to get around (see the Claude Code
-[permissions docs](https://code.claude.com/docs/en/permissions)). Instead, the skill
-moves files with [`scripts/transfer.py`](scripts/transfer.py), which refuses any URL
-outside Prior Labs' storage bucket (`https://storage.googleapis.com/p2or-datasets-prod/`)
-and any local path outside `reports/`. It runs under the existing `uv run` rule, so
-there's no prompt, and a raw `curl` still asks you first.
+**Why curl isn't on the list — and the prompts you'll see.** The TabPFN MCP server
+hands back signed URLs, and the agent uploads your CSVs and downloads predictions with
+`curl`: two or three commands per prediction. These go only to Prior Labs' storage
+(`https://storage.googleapis.com/p2or-datasets-prod/...`). The shared settings
+deliberately don't pre-approve curl, because `Bash(curl:*)` would let the agent send any
+file to any host without asking, for everyone who clones the repo. So Claude Code asks
+you before each transfer: check the URL is Prior Labs storage and the file is in
+`reports/`, then approve.
+
+To stop the prompts on your own machine, add the rule to your personal, gitignored
+`.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(curl:*)"]
+  }
+}
+```
+
+That's your call to make for yourself; it isn't shipped as a default. (A curl rule
+restricted to the Prior Labs URL won't help much: argument-matching rules are easy to
+get around, see the Claude Code [permissions docs](https://code.claude.com/docs/en/permissions).)
 
 If you'd rather not approve anything from this repo automatically, delete the `allow`
 list and approve commands one by one. Choosing "Yes, and don't ask again" saves a rule
-in your own `.claude/settings.local.json`. Note that `Bash(uv run:*)` is the broad one:
-it lets the agent run any Python in the project venv, which is what the inline data
-work relies on.
+in your own `.claude/settings.local.json`. Note that `Bash(uv run:*)` and
+`Bash(python -:*)` are the broad ones: they let the agent run any Python, which is what
+the inline data work relies on.
 
 ## Repo layout
 
@@ -191,10 +219,11 @@ work relies on.
 | `data/<name>_history.csv` | Labeled rows (80%) — the only data models are fit on |
 | `data/<name>_test.csv` | Held-out rows (20%) with labels — evaluation only |
 | `data/<name>_current.csv` | The same 20% with labels removed — the rows you ask to score |
+| `pyproject.toml`, `uv.lock` | Dependencies for `uv sync` |
+| `requirements.txt`, `requirements-datasets.txt` | The same dependencies for `pip install -r` (no uv needed) |
 | `scripts/baseline.py` | Timed XGBoost baseline, run only when a comparison is requested |
 | `scripts/evaluate.py` | Scores any predictions against held-out labels — the single source of metrics (ROC AUC / R²) |
 | `scripts/fetch_data.py` | Downloads the demo datasets and writes the role splits |
-| `scripts/transfer.py` | Uploads/downloads TabPFN files, restricted to Prior Labs storage and `reports/` |
 | `reports/<task>/` | Generated per dataset: `handoff.json` (cached fit), working files, and on-request `report.md` (gitignored) |
 
 ## Notes

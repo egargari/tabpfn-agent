@@ -1,0 +1,3 @@
+# pip alternative to `uv sync --extra datasets`: adds the UCI loader for wine_quality / heart_disease
+-r requirements.txt
+ucimlrepo>=0.0.7

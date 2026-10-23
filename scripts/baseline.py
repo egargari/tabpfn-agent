@@ -10,6 +10,8 @@ Reports the metrics Prior Labs' own cookbook uses: ROC AUC for classification,
 R2 for regression, plus fit+predict wall-clock. Nothing else.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 import time

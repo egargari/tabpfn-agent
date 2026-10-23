@@ -17,6 +17,8 @@ Usage: uv run python scripts/fetch_data.py [name ...]   # default: telco
 Names: telco, german_credit, ames_housing, wine_quality, heart_disease
 """
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -45,7 +47,7 @@ def load(name: str) -> pd.DataFrame:
         try:
             from ucimlrepo import fetch_ucirepo
         except ImportError:
-            raise SystemExit(f"{name} comes from UCI: run `uv sync --extra datasets` first")
+            raise SystemExit(f"{name} comes from UCI: run `uv sync --extra datasets` (or `pip install -r requirements-datasets.txt`) first")
 
         ds = fetch_ucirepo(id=source_id)
         df = pd.concat([ds.data.features, ds.data.targets], axis=1)

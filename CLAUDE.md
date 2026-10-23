@@ -7,15 +7,18 @@ Prior Labs MCP server (configured in `.mcp.json`, OAuth via `/mcp`).
 ## Rules
 
 - Run all Python through the uv-managed venv: `uv run python ...` (`uv sync` to set up).
+  If `uv` isn't installed (e.g. a sandbox with only pip), use plain `python ...` instead,
+  after `pip install -r requirements.txt` (`requirements-datasets.txt` for the UCI
+  datasets). Every `uv run python` command in the skill works the same way as
+  `python`.
 - For ANY prediction task on tabular data, use the `tabpfn-handoff` skill. Default mode
   is PREDICT: just deliver the prediction — no baseline, no scoreboard. Only run the
   XGBoost baseline (`scripts/baseline.py`) when the user explicitly asks for a
   comparison or metrics. Never train a local model as the answer.
 - Users may paste rows or CSV snippets of new data to score; reuse the cached fit in
   `reports/<task>/handoff.json` (see the skill, step 5).
-- Move files to/from TabPFN with `scripts/transfer.py` (upload/download), never raw
-  curl: it only talks to Prior Labs storage and only touches `reports/`, which is why it
-  can run without permission prompts.
+- Uploads/downloads use the curl commands the TabPFN MCP server returns, run only
+  against the signed URLs it just issued and only with files in `reports/<task>/`.
 - Use the hosted API/MCP path only. Do not download local TabPFN weights: the TabPFN
   weights license is non-commercial, and this demo must stay clean for public use.
 - Datasets live in `data/` as role-named splits (created by `scripts/fetch_data.py`,

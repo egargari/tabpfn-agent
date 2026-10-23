@@ -133,22 +133,21 @@ target), `y_train.csv` (exactly the one target column, rows aligned with x_train
 
 1. `prepare_train_set_upload` (optionally `description`) → `train_set_upload_id` plus
    an `upload_command` (a curl command with a signed URL) for x_train and y_train.
-2. Upload each file with the project's transfer helper — NOT raw curl (curl is not
-   pre-approved, so it would prompt the user):
-   `uv run python scripts/transfer.py upload reports/<task>/x_train.csv "<upload_command>"`
-   Pass the server's `upload_command` verbatim inside double quotes; the helper takes the
-   signed URL and headers from it and refuses anything but Prior Labs storage.
+2. Run each `upload_command` from the shell, replacing `<path/to/...>` with the
+   repo-relative file (`reports/<task>/x_train.csv`, `reports/<task>/y_train.csv`).
+   Upload is a plain HTTP PUT you perform yourself; there is no upload tool. Only ever
+   send files from `reports/<task>/` to the signed URLs the server just returned.
 3. `fit` with `train_set_upload_id` and `task` (`classification` | `regression`) →
    `fitted_train_set_id` immediately.
 4. Poll `get_fit_status`, waiting `retry_in_secs` between polls, until completed.
 5. `prepare_test_set_upload` with `fitted_train_set_id` → `test_set_upload_id` +
-   `upload_command` for x_test; upload it with `scripts/transfer.py upload` as above.
+   `upload_command` for x_test; run it with `reports/<task>/x_test.csv` as above.
 6. `predict` with `test_set_upload_id`, `fitted_train_set_id`, and the SAME `task` as
    the fit. Blocks; returns a signed download URL for a JSON array, one entry per test
    row (classification: per-class probabilities; regression: mean predictions).
-   Download it with
-   `uv run python scripts/transfer.py download "<prediction_uri>" reports/<task>/predictions.json`
-   and work with the file — don't read the whole array into context.
+   Download it with `curl --fail-with-body -o reports/<task>/predictions.json
+   '<prediction_uri>'` and work with the file — don't read the whole array into
+   context.
 
 **Cache the fit.** After a successful fit, write `reports/<task>/handoff.json`:
 `{fitted_train_set_id, train_set_upload_id, task, target, fit_file (the history file
@@ -157,7 +156,6 @@ strings), created}`. After the first predict, add `classes` from the predict
 metadata — that is the column order of the probability arrays. A fit can serve
 unlimited predict calls.
 
-- Limits: (train+test rows) × cols < 20M cells per request.
 - Auth problems → tell the user to run `/mcp` and authenticate (keys at ux.priorlabs.ai).
 - If the handoff fails, surface the error; never fall back to training a local model.
 

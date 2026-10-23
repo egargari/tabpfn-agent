@@ -15,6 +15,8 @@ order (numeric labels numerically, string labels alphabetically), which is how T
 orders classes.
 """
 
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

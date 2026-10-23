@@ -1,0 +1,4 @@
+# pip alternative to `uv sync` (keep in sync with pyproject.toml dependencies)
+pandas>=2.0
+scikit-learn>=1.4
+xgboost>=2.1
